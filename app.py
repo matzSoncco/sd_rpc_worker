@@ -49,7 +49,7 @@ def worker():
         channel = connection.channel()
 
         channel.queue.declare(
-            queue='vilef_rpc_queue',
+            queue='new_rpc_queue_cloud',
             durable=False,
             auto_delete=False
         )
@@ -68,9 +68,9 @@ def worker():
             response_message.publish(routing_key=message.reply_to)
             message.ack()
 
-        channel.basic.consume(on_request, queue='vilef_rpc_queue')
+        channel.basic.consume(on_request, queue='new_rpc_queue_cloud')
         
-        print("[x] Worker conectado exitosamente. Esperando mensajes en 'vilef_rpc_queue'...")
+        print("[x] Worker conectado exitosamente. Esperando mensajes en 'new_rpc_queue_cloud'...")
         channel.start_consuming(to_tuple=False)
         
     except Exception as e:
