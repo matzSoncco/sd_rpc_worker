@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from flask import Flask, render_template_string
 import amqpstorm
 from amqpstorm import Message
@@ -7,77 +8,72 @@ from amqpstorm import Message
 app = Flask(__name__)
 logs = []
 
+AMQP_CONFIG = {
+    "hostname": "horse.lmq.cloudamqp.com",
+    "username": "jrynbgfw",
+    "password": "fW12mOLo5JzmtTd_gJx83y04HCCxl3hS",
+    "virtual_host": "jrynbgfw",
+    "port": 5671,
+    "ssl": True,
+    "ssl_options": {"server_hostname": "horse.lmq.cloudamqp.com"}
+}
+
 @app.route('/')
 def home():
-    """Ruta base para verificar el estado del servicio worker."""
     return "Worker RPC funcionando"
 
 @app.route('/monitor')
 def monitor():
-    """Renderiza la interfaz web de monitoreo para los mensajes RPC entrantes."""
     html = """
-    <html>
-    <head>
-        <title>Monitor RPC</title>
-        <meta http-equiv="refresh" content="2">
-        <style>
-            body { background: #111; color: #0f0; font-family: Arial; padding: 20px; }
-            .log { background: #222; padding: 10px; margin: 5px; border-radius: 5px; }
-        </style>
-    </head>
-    <body>
-        <h1>Monitor Worker RPC</h1>
-        <h3>Total mensajes: {{ total }}</h3>
-        {% for log in logs %}
-            <div class="log">{{ log }}</div>
-        {% endfor %}
-    </body>
-    </html>
+    <html><head><title>Monitor RPC</title><meta http-equiv="refresh" content="2">
+    <style>body{background:#111;color:#0f0;font-family:Arial;padding:20px}
+    .log{background:#222;padding:10px;margin:5px;border-radius:5px}</style></head>
+    <body><h1>Monitor Worker RPC</h1><h3>Total mensajes: {{ total }}</h3>
+    {% for log in logs %}<div class="log">{{ log }}</div>{% endfor %}
+    </body></html>
     """
     return render_template_string(html, logs=logs, total=len(logs))
 
-def worker():
-    """Inicializa la conexión con el broker AMQP y procesa las solicitudes de la cola."""
-    try:
-        connection = amqpstorm.Connection(
-            hostname='horse.lmq.cloudamqp.com',
-            username='jrynbgfw',
-            password='fW12mOLo5JzmtTd_gJx83y04HCCxl3hS',
-            virtual_host='jrynbgfw',
-            port=5672
-        )
-        channel = connection.channel()
+def on_request(message):
+    """Callback ejecutado al recibir un mensaje."""
+    body = message.body
+    log = f"[x] Recibido: {body}"
+    print(log)
+    logs.append(log)
 
-        channel.queue.declare(
-            queue='new_rpc_queue_cloud',
-            durable=False,
-            auto_delete=False
-        )
+    response = f"Procesado: {body}"
+    response_message = Message.create(message.channel, response)
+    response_message.correlation_id = message.correlation_id
+    response_message.publish(routing_key=message.reply_to)
+    message.ack()
 
-        def on_request(message):
-            """Callback ejecutado al recibir un mensaje; emite la respuesta al cliente."""
-            body = message.body
-            log = f"[x] Recibido: {body}"
-            print(log)
-            logs.append(log)
+def worker_loop():
+    """Worker con reconexión automática ante caídas."""
+    while True:
+        try:
+            print("[*] Conectando al broker...")
+            connection = amqpstorm.Connection(**AMQP_CONFIG)
+            channel = connection.channel()
+            channel.basic.qos(prefetch_count=1)
 
-            response = f"Procesado: {body}"
-            response_message = Message.create(channel, response)
-            response_message.correlation_id = message.correlation_id
-            
-            response_message.publish(routing_key=message.reply_to)
-            message.ack()
+            channel.queue.declare(
+                queue='new_rpc_queue_cloud',
+                durable=True,
+                auto_delete=False
+            )
 
-        channel.basic.consume(on_request, queue='new_rpc_queue_cloud')
-        
-        print("[x] Worker conectado exitosamente. Esperando mensajes en 'new_rpc_queue_cloud'...")
-        channel.start_consuming(to_tuple=False)
-        
-    except Exception as e:
-        print(f"\n[!] Error en la ejecución del worker: {e}\n")
+            channel.basic.consume(on_request, queue='new_rpc_queue_cloud')
+            print("[x] Worker listo. Esperando mensajes...")
+            channel.start_consuming(to_tuple=False)
 
-worker_thread = threading.Thread(target=worker)
-worker_thread.daemon = True
+        except amqpstorm.AMQPConnectionError as e:
+            print(f"[!] Conexión perdida: {e}. Reintentando en 5s...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"[!] Error inesperado: {e}. Reintentando en 5s...")
+            time.sleep(5)
+
+worker_thread = threading.Thread(target=worker_loop, daemon=True)
 worker_thread.start()
 
 if __name__ == '__main__':
