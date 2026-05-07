@@ -57,12 +57,12 @@ def worker_loop():
             channel.basic.qos(prefetch_count=1)
 
             channel.queue.declare(
-                queue='new_rpc_queue_cloud',
+                queue='new_rpc_queue_cloud_v2',
                 durable=True,
                 auto_delete=False
             )
 
-            channel.basic.consume(on_request, queue='new_rpc_queue_cloud')
+            channel.basic.consume(on_request, queue='new_rpc_queue_cloud_v2')
             print("[x] Worker listo. Esperando mensajes...")
             channel.start_consuming(to_tuple=False)
 
